@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <title>Roguelike Rank - Online</title>
+    
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-firestore-compat.js"></script>
+
+    <script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser.min.js"></script>
+    <style> 
+        body { margin: 0; background: #000; overflow: hidden; font-family: 'Courier New', monospace; }
+        #game-over-screen {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.95); border: 4px solid #fff; padding: 20px;
+            color: #fff; text-align: center; display: none; z-index: 1000; width: 340px;
+        }
+        input { padding: 10px; width: 80%; margin-top: 10px; text-transform: uppercase; font-weight: bold; }
+        button { padding: 10px 20px; margin-top: 10px; cursor: pointer; background: #0f0; border: none; font-weight: bold; }
+        table { width: 100%; margin-top: 20px; font-size: 14px; }
+        td { border-bottom: 1px solid #444; padding: 5px; text-align: left; }
+        td:last-child { text-align: right; color: #ff0; }
+        .loading { color: #aaa; font-style: italic; margin-top: 10px; }
+        h3 { color: #0f0; border-bottom: 2px solid #0f0; display: inline-block; }
+    </style>
+</head>
+<body>
+
+<div id="game-over-screen">
+    <h2 style="color:red; margin:0;">GAME OVER</h2>
+    <p>Pontuação Final: <span id="pontos-finais" style="color:#ff0; font-size: 24px;">0</span></p>
+    
+    <div id="input-area">
+        <p>Digite seu nome para o Ranking:</p>
+        <input type="text" id="nome-jogador" maxlength="12" placeholder="SEU NOME">
+        <br>
+        <button onclick="enviarParaNuvem()">GRAVAR ONLINE</button>
+    </div>
+
+    <div id="tabela-area" style="display:none;">
+        <h3>TOP 5 MUNDIAL</h3>
+        <div id="loading-msg" class="loading">Baixando dados do servidor...</div>
+        <table id="lista-recordes"></table>
+        <button onclick="location.reload()" style="background:#fff; color:#000; margin-top:20px">JOGAR DE NOVO</button>
+    </div>
+</div>
+
+<script>
+// ======================================================
+// 2. CONFIGURAÇÃO DO FIREBASE (JÁ COM SUAS CHAVES!)
+// ======================================================
+const firebaseConfig = {
+  apiKey: "AIzaSyBDoAe_f_oxkk0XpIacmNNBphAXdxbNj54",
+  authDomain: "roguelikerank.firebaseapp.com",
+  projectId: "roguelikerank",
+  storageBucket: "roguelikerank.firebasestorage.app",
+  messagingSenderId: "842379084836",
+  appId: "1:842379084836:web:64f22b2ce8f6bec11784b1"
+};
+
+// Inicializa o Firebase
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore(); 
+
+// ======================================================
+// CÓDIGO DO JOGO
+// ======================================================
+const ZOOM = 3; const TILE_SIZE = 16; 
+const config = {
+    type: Phaser.WEBGL, width: window.innerWidth, height: window.innerHeight, pixelArt: true,
+    physics: { default: 'arcade', arcade: { gravity: { y: 0 }, debug: false } },
+    scene: { init: init, preload: preload, create: create, update: update }
+};
+const game = new Phaser.Game(config);
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+let player, cursors, keySpace, luz, camadaEscura, inimigos, balasPlayer, emitter;
+let porta, textoHUD, nivelAtual, vidaJogador, podeMover, pontuacao, baus, ultimaDirecao = 'direita';
+let map, layer, jogoRodando = true;
+
+// MAPAS MANUAIS (Seus desenhos)
+const MEUS_MAPAS = [
+    [[6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6],[6,19,19,19,19,19,19,6,19,19,19,19,19,19,19,19,19,19,19,6],[6,19,19,19,19,19,19,6,19,19,19,19,19,19,19,19,19,19,19,6],[6,19,19,19,19,19,19,6,19,19,19,6,6,6,19,19,19,19,19,6],[6,19,19,6,6,6,19,19,19,19,19,6,19,19,19,19,19,19,19,6],[6,19,19,6,19,19,19,19,19,19,19,6,19,19,6,6,6,6,6,6],[6,19,19,6,19,19,19,19,19,19,19,6,19,19,19,19,19,19,19,6],[6,19,19,6,6,6,6,6,19,19,19,6,19,19,19,19,19,19,19,6],[6,19,19,19,19,19,19,19,19,19,19,19,19,19,19,19,19,19,19,6],[6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6,6]]
+];
+
+function init(data) {
+    nivelAtual = data.nivel || 1;
+    vidaJogador = (data.vida !== undefined) ? data.vida : 100;
+    pontuacao = (data.pontos !== undefined) ? data.pontos : 0;
+    podeMover = true; jogoRodando = true;
+    document.getElementById('game-over-screen').style.display = 'none';
+}
+
+function preload() {
+    this.load.setBaseURL('https://labs.phaser.io/assets/');
+    this.load.image('tiles', 'tilemaps/tiles/buch-dungeon-tileset-extruded.png');
+    this.load.spritesheet('dude', 'sprites/dude.png', { frameWidth: 32, frameHeight: 48 });
+    this.load.image('bala', 'sprites/orb-blue.png'); 
+    this.load.image('bau_fechado', 'sprites/crate.png');
+    // Sem load.audio para evitar tela preta
+}
+
+function create() {
+    let indiceMapa = (nivelAtual - 1) % MEUS_MAPAS.length;
+    const dadosMapa = MEUS_MAPAS[indiceMapa];
+    map = this.make.tilemap({ data: dadosMapa, tileWidth: TILE_SIZE, tileHeight: TILE_SIZE });
+    const tileset = map.addTilesetImage('tiles');
+    layer = map.createLayer(0, tileset, 0, 0);
+    layer.setScale(ZOOM); layer.setCollision(6);
+    this.physics.world.setBounds(0, 0, map.widthInPixels * ZOOM, map.heightInPixels * ZOOM);
+
+    const acharLugarVazio = () => {
+        let valido = false, px, py, t=0;
+        let h = dadosMapa.length; let w = dadosMapa[0].length;
+        while (!valido && t < 1000) {
+            let tx = Phaser.Math.Between(1, w - 2); let ty = Phaser.Math.Between(1, h - 2);
+            if (dadosMapa[ty][tx] === 19) {
+                px = tx * TILE_SIZE * ZOOM + 24; py = ty * TILE_SIZE * ZOOM + 24; valido = true;
+            } t++;
+        } return { x: px, y: py };
+    };
+
+    let posP = acharLugarVazio();
+    player = this.physics.add.sprite(posP.x, posP.y, 'dude').setScale(1.5);
+    player.body.setSize(20, 30).setOffset(6, 18).setCollideWorldBounds(true);
+    this.physics.add.collider(player, layer);
+
+    let posPorta = acharLugarVazio();
+    while (Phaser.Math.Distance.Between(posP.x, posP.y, posPorta.x, posPorta.y) < 200) posPorta = acharLugarVazio();
+    porta = this.physics.add.sprite(posPorta.x, posPorta.y, 'dude').setTint(0x00ff00).setScale(1.2);
+    porta.body.immovable = true;
+    this.physics.add.overlap(player, porta, passarDeNivel, null, this);
+
+    baus = this.physics.add.group();
+    let posBau = acharLugarVazio();
+    if (Phaser.Math.Distance.Between(posBau.x, posBau.y, player.x, player.y) > 100) {
+        let bau = baus.create(posBau.x, posBau.y, 'bau_fechado'); bau.setTint(0xffd700).setScale(1.2);
+    }
+    this.physics.add.collider(baus, layer); this.physics.add.overlap(player, baus, pegarVida, null, this);
+
+    inimigos = this.physics.add.group();
+    let qtd = 2 + nivelAtual; 
+    for (let i = 0; i < qtd; i++) {
+        let pos = acharLugarVazio();
+        if (pos.x && Phaser.Math.Distance.Between(pos.x, pos.y, player.x, player.y) > 100) {
+            let inimigo = inimigos.create(pos.x, pos.y, 'dude');
+            inimigo.body.setSize(20, 30).setOffset(6, 18).setCollideWorldBounds(true);
+            if (nivelAtual >= 2 && Math.random() > 0.5) { inimigo.setTint(0x0000ff); inimigo.tipo = 'rapido'; inimigo.vida = 2; inimigo.velocidade = 160; } 
+            else { inimigo.setTint(0xff0000); inimigo.tipo = 'normal'; inimigo.vida = 3 + nivelAtual; inimigo.velocidade = 80; }
+        }
+    }
+    this.physics.add.collider(inimigos, layer); this.physics.add.collider(inimigos, inimigos);
+
+    emitter = this.add.particles(0, 0, 'bala', { speed: {min:100, max:200}, scale:{start:0.4, end:0}, lifespan:200, emitting:false });
+    balasPlayer = this.physics.add.group({ defaultKey: 'bala', maxSize: 30 });
+    this.physics.add.collider(balasPlayer, layer, (b) => { emitter.explode(5, b.x, b.y); b.destroy(); });
+    this.physics.add.overlap(balasPlayer, inimigos, (b, i) => {
+        b.destroy(); emitter.explode(10, i.x, i.y); tocarSom('explosao'); i.vida--;
+        i.setTint(0xffffff); this.time.delayedCall(50, () => i.setTint(i.tipo==='rapido'?0x0000ff:0xff0000));
+        if(player.x < i.x) i.setVelocityX(150); else i.setVelocityX(-150);
+        if(i.vida<=0) { pontuacao += (i.tipo==='rapido')?200:100; atualizarHUD(); i.destroy(); this.cameras.main.shake(100,0.01); }
+    });
+    this.physics.add.overlap(player, inimigos, (p, i) => {
+        if(!podeMover || !jogoRodando) return;
+        vidaJogador -= 10; atualizarHUD(); podeMover = false; tocarSom('dano');
+        if(p.x < i.x) p.setVelocityX(-300); else p.setVelocityX(300); p.setVelocityY((p.y < i.y)?-300:300);
+        p.setTint(0xff0000); this.time.delayedCall(300, ()=>{p.clearTint(); podeMover=true;});
+        if(vidaJogador<=0) { jogoRodando = false; p.setTint(0x000000); this.physics.pause(); mostrarTelaGameOver(); }
+    });
+
+    let graphics = this.make.graphics({ add: false });
+    graphics.fillStyle(0xffffff, 1); graphics.fillCircle(150, 150, 150);
+    graphics.generateTexture('texturaLuz', 300, 300);
+    luz = this.make.sprite({ x: 0, y: 0, key: 'texturaLuz', add: false });
+    camadaEscura = this.add.rectangle(0, 0, config.width, config.height, 0x000000, 0.95);
+    camadaEscura.setOrigin(0, 0).setDepth(100);
+    camadaEscura.setMask(new Phaser.Display.Masks.BitmapMask(this, luz));
+    camadaEscura.mask.invertAlpha = true;
+
+    this.anims.create({ key: 'esquerda', frames: this.anims.generateFrameNumbers('dude', { start: 0, end: 3 }), frameRate: 10, repeat: -1 });
+    this.anims.create({ key: 'parado', frames: [ { key: 'dude', frame: 4 } ], frameRate: 20 });
+    this.anims.create({ key: 'direita', frames: this.anims.generateFrameNumbers('dude', { start: 5, end: 8 }), frameRate: 10, repeat: -1 });
+    cursors = this.input.keyboard.createCursorKeys();
+    keySpace = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
+    textoHUD = this.add.text(20, 20, '', { fontSize: '20px', backgroundColor: '#000', color: '#0f0', padding: {x:10,y:5} }).setDepth(200);
+    atualizarHUD();
+}
+
+function update() {
+    if (!jogoRodando) return;
+    if (podeMover) {
+        player.setVelocity(0); const vel = 250;
+        if (cursors.left.isDown) { player.setVelocityX(-vel); player.anims.play('esquerda', true); ultimaDirecao='esquerda'; }
+        else if (cursors.right.isDown) { player.setVelocityX(vel); player.anims.play('direita', true); ultimaDirecao='direita'; }
+        if (cursors.up.isDown) { player.setVelocityY(-vel); if(player.body.velocity.x===0) player.anims.play('parado', true); }
+        else if (cursors.down.isDown) { player.setVelocityY(vel); if(player.body.velocity.x===0) player.anims.play('parado', true); }
+        if (player.body.velocity.x===0 && player.body.velocity.y===0) player.anims.play('parado', true);
+        if (Phaser.Input.Keyboard.JustDown(keySpace)) atirar(this);
+    }
+    inimigos.children.iterate((inimigo) => {
+        if (!inimigo) return;
+        const dist = (inimigo.tipo === 'rapido') ? 600 : 400;
+        if (podeMover && Phaser.Math.Distance.Between(inimigo.x, inimigo.y, player.x, player.y) < dist) {
+            this.physics.moveToObject(inimigo, player, inimigo.velocidade);
+            inimigo.setFlipX(inimigo.body.velocity.x < 0);
+        } else if (inimigo.body.velocity.length() < 10) inimigo.setVelocity(0);
+    });
+    camadaEscura.width = map.widthInPixels * ZOOM; camadaEscura.height = map.heightInPixels * ZOOM; luz.x = player.x; luz.y = player.y;
+}
+
+function atirar(scene) {
+    let bala = balasPlayer.get(player.x, player.y);
+    if (bala) {
+        tocarSom('tiro'); bala.setActive(true).setVisible(true).setScale(0.8).body.enable=true;
+        let vel = 600;
+        if (ultimaDirecao === 'esquerda') { bala.body.velocity.x = -vel; bala.body.velocity.y = 0; player.x += 4; }
+        else { bala.body.velocity.x = vel; bala.body.velocity.y = 0; player.x -= 4; }
+        scene.time.delayedCall(1000, () => { if (bala.active) bala.destroy(); });
+    }
+}
+function pegarVida(player, bau) {
+    if (vidaJogador >= 100) return;
+    tocarSom('item'); bau.destroy(); vidaJogador += 30; if (vidaJogador > 100) vidaJogador = 100;
+    atualizarHUD(); player.setTint(0x00ff00); this.time.delayedCall(300, () => player.clearTint());
+}
+function passarDeNivel() {
+    this.physics.pause();
+    this.cameras.main.fade(500, 0, 0, 0);
+    this.cameras.main.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => {
+        pontuacao += 500; this.scene.restart({ nivel: nivelAtual + 1, vida: vidaJogador, pontos: pontuacao });
+    });
+}
+function atualizarHUD() { textoHUD.setText(`NV: ${nivelAtual} | HP: ${vidaJogador}% | PTS: ${pontuacao}`); }
+function tocarSom(tipo) {
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    const osc = audioCtx.createOscillator(); const gain = audioCtx.createGain(); osc.connect(gain); gain.connect(audioCtx.destination); const agora = audioCtx.currentTime;
+    if (tipo === 'tiro') { osc.type='square'; osc.frequency.setValueAtTime(800, agora); osc.frequency.exponentialRampToValueAtTime(100, agora+0.1); gain.gain.setValueAtTime(0.1, agora); gain.gain.exponentialRampToValueAtTime(0.01, agora+0.1); osc.start(agora); osc.stop(agora+0.1); }
+    else if (tipo === 'item') { osc.type='sine'; osc.frequency.setValueAtTime(1200, agora); osc.frequency.linearRampToValueAtTime(1800, agora+0.1); gain.gain.setValueAtTime(0.1, agora); gain.gain.linearRampToValueAtTime(0.01, agora+0.3); osc.start(agora); osc.stop(agora+0.3); }
+    else if (tipo === 'dano') { osc.type='sawtooth'; osc.frequency.setValueAtTime(150, agora); osc.frequency.linearRampToValueAtTime(50, agora+0.2); gain.gain.setValueAtTime(0.1, agora); gain.gain.linearRampToValueAtTime(0.01, agora+0.2); osc.start(agora); osc.stop(agora+0.2); }
+    else if (tipo === 'explosao') { osc.type='triangle'; osc.frequency.setValueAtTime(100, agora); osc.frequency.exponentialRampToValueAtTime(10, agora+0.3); gain.gain.setValueAtTime(0.2, agora); gain.gain.exponentialRampToValueAtTime(0.01, agora+0.3); osc.start(agora); osc.stop(agora+0.3); }
+}
+
+// 3. FUNÇÕES DO FIREBASE (GRAVAR E LER)
+function mostrarTelaGameOver() {
+    const tela = document.getElementById('game-over-screen');
+    document.getElementById('pontos-finais').innerText = pontuacao;
+    tela.style.display = 'block';
+    document.getElementById('input-area').style.display = 'block';
+    document.getElementById('tabela-area').style.display = 'none';
+}
+
+function enviarParaNuvem() {
+    const nomeInput = document.getElementById('nome-jogador');
+    const nome = nomeInput.value.toUpperCase() || "ANONIMO";
+    const botao = document.querySelector('button');
+    botao.disabled = true; botao.innerText = "GRAVANDO...";
+
+    db.collection("recordes").add({
+        nome: nome,
+        pontos: pontuacao,
+        data: firebase.firestore.FieldValue.serverTimestamp()
+    })
+    .then(() => {
+        console.log("Sucesso!");
+        carregarDoFirebase();
+    })
+    .catch((error) => {
+        console.error("Erro: ", error);
+        alert("Erro no Firebase: " + error.message);
+        botao.disabled = false;
+        botao.innerText = "TENTAR NOVAMENTE";
+    });
+}
+
+function carregarDoFirebase() {
+    document.getElementById('input-area').style.display = 'none';
+    document.getElementById('tabela-area').style.display = 'block';
+    const lista = document.getElementById('lista-recordes');
+    lista.innerHTML = '';
+
+    db.collection("recordes")
+        .orderBy("pontos", "desc")
+        .limit(5)
+        .get()
+        .then((querySnapshot) => {
+            document.getElementById('loading-msg').style.display = 'none';
+            let posicao = 1;
+            querySnapshot.forEach((doc) => {
+                const dados = doc.data();
+                let linha = `<tr><td>${posicao}. ${dados.nome}</td><td>${dados.pontos}</td></tr>`;
+                lista.innerHTML += linha;
+                posicao++;
+            });
+        });
+}
+</script>
+</body>
+</html>
