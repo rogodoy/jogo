@@ -28,7 +28,7 @@
 
 <div id="game-over-screen">
     <h2 style="color:red; margin:0;">GAME OVER</h2>
-    <p>PontuaÁ„o Final: <span id="pontos-finais" style="color:#ff0; font-size: 24px;">0</span></p>
+    <p>Pontua√ß√£o Final: <span id="pontos-finais" style="color:#ff0; font-size: 24px;">0</span></p>
     
     <div id="input-area">
         <p>Digite seu nome para o Ranking:</p>
@@ -47,7 +47,7 @@
 
 <script>
 // ======================================================
-// 2. CONFIGURA«√O DO FIREBASE (J¡ COM SUAS CHAVES!)
+// 2. CONFIGURA√á√ÉO DO FIREBASE (J√Å COM SUAS CHAVES!)
 // ======================================================
 const firebaseConfig = {
   apiKey: "AIzaSyBDoAe_f_oxkk0XpIacmNNBphAXdxbNj54",
@@ -63,7 +63,7 @@ firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore(); 
 
 // ======================================================
-// C”DIGO DO JOGO
+// C√ìDIGO DO JOGO
 // ======================================================
 const ZOOM = 3; const TILE_SIZE = 16; 
 const config = {
@@ -240,7 +240,7 @@ function tocarSom(tipo) {
     else if (tipo === 'explosao') { osc.type='triangle'; osc.frequency.setValueAtTime(100, agora); osc.frequency.exponentialRampToValueAtTime(10, agora+0.3); gain.gain.setValueAtTime(0.2, agora); gain.gain.exponentialRampToValueAtTime(0.01, agora+0.3); osc.start(agora); osc.stop(agora+0.3); }
 }
 
-// 3. FUN«’ES DO FIREBASE (GRAVAR E LER)
+// 3. FUN√á√ïES DO FIREBASE (GRAVAR E LER)
 function mostrarTelaGameOver() {
     const tela = document.getElementById('game-over-screen');
     document.getElementById('pontos-finais').innerText = pontuacao;
